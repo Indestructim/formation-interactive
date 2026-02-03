@@ -3,6 +3,20 @@ import { queries } from '../db/database.js'
 // Track connected users per session
 const sessionUsers = new Map()
 
+// Track active activities with expected participant count
+export const activeActivities = new Map()
+
+// Helper to get participant count for a session
+function getParticipantCount(io, sessionCode) {
+  const users = sessionUsers.get(sessionCode)
+  if (!users) return 0
+
+  return Array.from(users).filter(id => {
+    const s = io.sockets.sockets.get(id)
+    return s && !s.data?.isPresenter
+  }).length
+}
+
 export function setupSocketHandlers(io) {
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id)
@@ -35,11 +49,7 @@ export function setupSocketHandlers(io) {
       }
 
       // Send participant count
-      const count = Array.from(sessionUsers.get(sessionCode)).filter(id => {
-        const s = io.sockets.sockets.get(id)
-        return s && !s.data?.isPresenter
-      }).length
-
+      const count = getParticipantCount(io, sessionCode)
       io.to(`session:${sessionCode}`).emit('participants:count', count)
 
       // Store session info on socket
@@ -59,25 +69,72 @@ export function setupSocketHandlers(io) {
 
     // Start an activity
     socket.on('activity:start', ({ sessionCode, activity }) => {
-      io.to(`session:${sessionCode}`).emit('activity:started', { activity })
-      console.log(`Activity started in session ${sessionCode}: ${activity.title}`)
+      // Capture participant count at activity start
+      const expectedCount = getParticipantCount(io, sessionCode)
+
+      // Store activity info
+      activeActivities.set(activity.id, {
+        sessionCode,
+        expectedCount,
+        respondedParticipants: new Set()
+      })
+
+      io.to(`session:${sessionCode}`).emit('activity:started', {
+        activity,
+        expectedCount
+      })
+      console.log(`Activity started in session ${sessionCode}: ${activity.title} (expecting ${expectedCount} responses)`)
     })
 
     // Stop an activity
-    socket.on('activity:stop', ({ sessionCode }) => {
-      io.to(`session:${sessionCode}`).emit('activity:stopped')
+    socket.on('activity:stop', ({ sessionCode, activityId }) => {
+      // Get final responses if activity exists
+      const activityInfo = activeActivities.get(activityId)
+      let responses = []
+
+      if (activityInfo) {
+        responses = queries.getResponsesByActivity(activityId)
+        activeActivities.delete(activityId)
+      }
+
+      io.to(`session:${sessionCode}`).emit('activity:stopped', { responses })
       console.log(`Activity stopped in session ${sessionCode}`)
     })
 
-    // Submit a response
+    // Submit a response - now only broadcasts count, not results
     socket.on('response:submit', ({ sessionCode, activityId, participantId, answer }) => {
-      // Broadcast to presenters in the session
-      socket.to(`session:${sessionCode}`).emit('response:new', {
-        activityId,
-        participantId,
-        answer
-      })
-      console.log(`Response submitted in session ${sessionCode}`)
+      const activityInfo = activeActivities.get(activityId)
+
+      if (activityInfo) {
+        // Track this participant as having responded
+        activityInfo.respondedParticipants.add(participantId)
+
+        const respondedCount = activityInfo.respondedParticipants.size
+        const expectedCount = activityInfo.expectedCount
+
+        // Broadcast progress
+        io.to(`session:${sessionCode}`).emit('response:progress', {
+          activityId,
+          respondedCount,
+          expectedCount
+        })
+
+        console.log(`Response submitted in session ${sessionCode}: ${respondedCount}/${expectedCount}`)
+
+        // Check if all have responded
+        if (respondedCount >= expectedCount) {
+          // Get all responses from database
+          const responses = queries.getResponsesByActivity(activityId)
+
+          // Broadcast results
+          io.to(`session:${sessionCode}`).emit('activity:resultsReady', {
+            activityId,
+            responses
+          })
+
+          console.log(`All responses received for activity ${activityId}, broadcasting results`)
+        }
+      }
     })
 
     // Handle disconnect
@@ -102,15 +159,8 @@ export function setupSocketHandlers(io) {
         }
 
         // Update participant count
-        const remaining = sessionUsers.get(currentSession)
-        if (remaining) {
-          const count = Array.from(remaining).filter(id => {
-            const s = io.sockets.sockets.get(id)
-            return s && !s.data?.isPresenter
-          }).length
-
-          io.to(`session:${currentSession}`).emit('participants:count', count)
-        }
+        const count = getParticipantCount(io, currentSession)
+        io.to(`session:${currentSession}`).emit('participants:count', count)
       }
 
       console.log('Client disconnected:', socket.id)

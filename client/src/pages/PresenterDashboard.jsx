@@ -22,6 +22,11 @@ export default function PresenterDashboard() {
   const [activityType, setActivityType] = useState(null)
   const [activities, setActivities] = useState([])
 
+  // New states for results display
+  const [expectedCount, setExpectedCount] = useState(0)
+  const [respondedCount, setRespondedCount] = useState(0)
+  const [showResults, setShowResults] = useState(false)
+
   useEffect(() => {
     if (!sessionCode) return
 
@@ -55,19 +60,36 @@ export default function PresenterDashboard() {
       setParticipants(prev => prev.filter(p => p.id !== data.participantId))
     })
 
-    socket.on('response:new', (data) => {
-      setResponses(prev => [...prev, data])
-    })
-
     socket.on('participants:list', (data) => {
       setParticipants(data)
+    })
+
+    // Listen for response progress (not individual responses)
+    socket.on('response:progress', (data) => {
+      setRespondedCount(data.respondedCount)
+    })
+
+    // Listen for results ready (all have responded)
+    socket.on('activity:resultsReady', (data) => {
+      setResponses(data.responses)
+      setShowResults(true)
+    })
+
+    // Listen for activity stopped (show partial results)
+    socket.on('activity:stopped', (data) => {
+      if (data.responses) {
+        setResponses(data.responses)
+        setShowResults(true)
+      }
     })
 
     return () => {
       socket.off('participant:joined')
       socket.off('participant:left')
-      socket.off('response:new')
       socket.off('participants:list')
+      socket.off('response:progress')
+      socket.off('activity:resultsReady')
+      socket.off('activity:stopped')
     }
   }, [socket, sessionCode])
 
@@ -92,6 +114,8 @@ export default function PresenterDashboard() {
       await fetch(`${API_URL}/api/activities/${activity.id}/start`, { method: 'POST' })
       setCurrentActivity(activity)
       setResponses([])
+      setRespondedCount(0)
+      setShowResults(false)
       socket.emit('activity:start', { sessionCode, activity })
     } catch (error) {
       console.error('Error starting activity:', error)
@@ -103,12 +127,25 @@ export default function PresenterDashboard() {
 
     try {
       await fetch(`${API_URL}/api/activities/${currentActivity.id}/stop`, { method: 'POST' })
-      socket.emit('activity:stop', { sessionCode })
+      socket.emit('activity:stop', { sessionCode, activityId: currentActivity.id })
       setCurrentActivity(null)
     } catch (error) {
       console.error('Error stopping activity:', error)
     }
   }
+
+  // Listen for activity started to get expected count
+  useEffect(() => {
+    if (!socket) return
+
+    socket.on('activity:started', (data) => {
+      setExpectedCount(data.expectedCount)
+    })
+
+    return () => {
+      socket.off('activity:started')
+    }
+  }, [socket])
 
   const openPresentationMode = () => {
     window.open(`/present/${sessionCode}`, '_blank')
@@ -181,7 +218,12 @@ export default function PresenterDashboard() {
                     <div>
                       <span className="text-xs font-medium text-primary-600 uppercase">En cours</span>
                       <h3 className="font-semibold text-gray-800">{currentActivity.title}</h3>
-                      <p className="text-sm text-gray-500">{responses.length} réponse(s)</p>
+                      <p className="text-sm text-gray-500">
+                        {showResults
+                          ? `${responses.length} réponse(s)`
+                          : `${respondedCount}/${expectedCount} ont répondu`
+                        }
+                      </p>
                     </div>
                     <button
                       onClick={handleStopActivity}
@@ -191,16 +233,37 @@ export default function PresenterDashboard() {
                     </button>
                   </div>
 
-                  {/* Live Results */}
+                  {/* Results or Waiting */}
                   <div className="mt-4">
-                    {currentActivity.type === 'wordcloud' && (
-                      <WordCloudResults responses={responses} />
-                    )}
-                    {currentActivity.type === 'quiz' && (
-                      <QuizResults activity={currentActivity} responses={responses} />
-                    )}
-                    {currentActivity.type === 'poll' && (
-                      <PollResults activity={currentActivity} responses={responses} />
+                    {showResults ? (
+                      <>
+                        {currentActivity.type === 'wordcloud' && (
+                          <WordCloudResults responses={responses} />
+                        )}
+                        {currentActivity.type === 'quiz' && (
+                          <QuizResults activity={currentActivity} responses={responses} />
+                        )}
+                        {currentActivity.type === 'poll' && (
+                          <PollResults activity={currentActivity} responses={responses} />
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-8">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-100 mb-4">
+                          <svg className="w-8 h-8 text-primary-600 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <p className="text-gray-600 font-medium">
+                          En attente des réponses...
+                        </p>
+                        <p className="text-2xl font-bold text-primary-600 mt-2">
+                          {respondedCount} / {expectedCount}
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          Les résultats s'afficheront quand tous auront répondu
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>

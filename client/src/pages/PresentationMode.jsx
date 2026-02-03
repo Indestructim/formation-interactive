@@ -17,6 +17,11 @@ export default function PresentationMode() {
   const [participantCount, setParticipantCount] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // New states for results display
+  const [expectedCount, setExpectedCount] = useState(0)
+  const [respondedCount, setRespondedCount] = useState(0)
+  const [showResults, setShowResults] = useState(false)
+
   useEffect(() => {
     fetch(`${API_URL}/api/sessions/${sessionCode}`)
       .then(res => res.json())
@@ -31,15 +36,29 @@ export default function PresentationMode() {
 
     socket.on('activity:started', (data) => {
       setCurrentActivity(data.activity)
+      setExpectedCount(data.expectedCount)
       setResponses([])
+      setRespondedCount(0)
+      setShowResults(false)
     })
 
-    socket.on('activity:stopped', () => {
+    socket.on('activity:stopped', (data) => {
+      if (data.responses) {
+        setResponses(data.responses)
+        setShowResults(true)
+      }
       setCurrentActivity(null)
     })
 
-    socket.on('response:new', (data) => {
-      setResponses(prev => [...prev, data])
+    // Listen for response progress
+    socket.on('response:progress', (data) => {
+      setRespondedCount(data.respondedCount)
+    })
+
+    // Listen for results ready
+    socket.on('activity:resultsReady', (data) => {
+      setResponses(data.responses)
+      setShowResults(true)
     })
 
     socket.on('participants:count', (count) => {
@@ -57,7 +76,8 @@ export default function PresentationMode() {
     return () => {
       socket.off('activity:started')
       socket.off('activity:stopped')
-      socket.off('response:new')
+      socket.off('response:progress')
+      socket.off('activity:resultsReady')
       socket.off('participants:count')
       socket.off('participant:joined')
       socket.off('participant:left')
@@ -145,19 +165,43 @@ export default function PresentationMode() {
                 </span>
                 <h2 className="text-4xl font-bold mt-2">{currentActivity.title}</h2>
                 <p className="mt-2 text-gray-400">
-                  {responses.length} réponse{responses.length > 1 ? 's' : ''}
+                  {showResults
+                    ? `${responses.length} réponse${responses.length > 1 ? 's' : ''}`
+                    : `${respondedCount}/${expectedCount} ont répondu`
+                  }
                 </p>
               </div>
 
               <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-8">
-                {currentActivity.type === 'wordcloud' && (
-                  <WordCloudResults responses={responses} darkMode />
-                )}
-                {currentActivity.type === 'quiz' && (
-                  <QuizResults activity={currentActivity} responses={responses} darkMode />
-                )}
-                {currentActivity.type === 'poll' && (
-                  <PollResults activity={currentActivity} responses={responses} darkMode />
+                {showResults ? (
+                  <>
+                    {currentActivity.type === 'wordcloud' && (
+                      <WordCloudResults responses={responses} darkMode />
+                    )}
+                    {currentActivity.type === 'quiz' && (
+                      <QuizResults activity={currentActivity} responses={responses} darkMode />
+                    )}
+                    {currentActivity.type === 'poll' && (
+                      <PollResults activity={currentActivity} responses={responses} darkMode />
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-16">
+                    <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-white/10 mb-6">
+                      <svg className="w-12 h-12 text-primary-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-2xl text-gray-300 font-medium mb-4">
+                      En attente des réponses...
+                    </p>
+                    <div className="text-6xl font-bold text-primary-400 mb-2">
+                      {respondedCount} / {expectedCount}
+                    </div>
+                    <p className="text-gray-500">
+                      Les résultats s'afficheront quand tous auront répondu
+                    </p>
+                  </div>
                 )}
               </div>
             </motion.div>
