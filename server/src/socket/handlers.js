@@ -1,20 +1,23 @@
 import { queries } from '../db/database.js'
 
-// Track connected users per session
+// Track connected users per session: sessionCode → Map<socketId, {id, nickname}>
 const sessionUsers = new Map()
 
 // Track active activities with expected participant count
 export const activeActivities = new Map()
 
-// Helper to get participant count for a session
-function getParticipantCount(io, sessionCode) {
+// Helper to get participant count for a session (excluding presenters)
+function getParticipantCount(sessionCode) {
   const users = sessionUsers.get(sessionCode)
   if (!users) return 0
+  return Array.from(users.values()).filter(u => u.id).length
+}
 
-  return Array.from(users).filter(id => {
-    const s = io.sockets.sockets.get(id)
-    return s && !s.data?.isPresenter
-  }).length
+// Get list of connected participants for a session
+function getConnectedParticipants(sessionCode) {
+  const users = sessionUsers.get(sessionCode)
+  if (!users) return []
+  return Array.from(users.values()).filter(u => u.id) // Exclude presenters (no id)
 }
 
 export function setupSocketHandlers(io) {
@@ -32,14 +35,33 @@ export function setupSocketHandlers(io) {
       // Join the socket room
       socket.join(`session:${sessionCode}`)
 
-      // Track user
+      // Track user with their info
       if (!sessionUsers.has(sessionCode)) {
-        sessionUsers.set(sessionCode, new Set())
+        sessionUsers.set(sessionCode, new Map())
       }
 
-      sessionUsers.get(sessionCode).add(socket.id)
+      // Store participant info (or empty object for presenter)
+      if (presenter) {
+        sessionUsers.get(sessionCode).set(socket.id, { isPresenter: true })
+      } else {
+        sessionUsers.get(sessionCode).set(socket.id, {
+          id: participantId,
+          nickname: nickname || 'Anonyme'
+        })
+      }
 
-      // Notify others
+      // Store session info on socket
+      socket.data = { sessionCode, participantId, isPresenter: presenter }
+
+      // Get current connected participants
+      const participants = getConnectedParticipants(sessionCode)
+      const count = participants.length
+
+      // Broadcast updated participant list to all in session
+      io.to(`session:${sessionCode}`).emit('participants:list', participants)
+      io.to(`session:${sessionCode}`).emit('participants:count', count)
+
+      // Notify others of new participant
       if (!presenter) {
         socket.to(`session:${sessionCode}`).emit('participant:joined', {
           id: participantId,
@@ -48,29 +70,13 @@ export function setupSocketHandlers(io) {
         })
       }
 
-      // Send participant count
-      const count = getParticipantCount(io, sessionCode)
-      io.to(`session:${sessionCode}`).emit('participants:count', count)
-
-      // Store session info on socket
-      socket.data = { sessionCode, participantId, isPresenter: presenter }
-
-      // If presenter, send current participants list
-      if (presenter) {
-        const session = queries.getSessionByCode(sessionCode)
-        if (session) {
-          const participants = queries.getParticipantsBySession(session.id)
-          socket.emit('participants:list', participants)
-        }
-      }
-
-      console.log(`${presenter ? 'Presenter' : 'Participant'} joined session ${sessionCode}`)
+      console.log(`${presenter ? 'Presenter' : 'Participant'} joined session ${sessionCode}. Total participants: ${count}`)
     })
 
     // Start an activity
     socket.on('activity:start', ({ sessionCode, activity }) => {
       // Capture participant count at activity start
-      const expectedCount = getParticipantCount(io, sessionCode)
+      const expectedCount = getParticipantCount(sessionCode)
 
       // Store activity info
       activeActivities.set(activity.id, {
@@ -158,12 +164,16 @@ export function setupSocketHandlers(io) {
           })
         }
 
-        // Update participant count
-        const count = getParticipantCount(io, currentSession)
+        // Update participant list and count
+        const participants = getConnectedParticipants(currentSession)
+        const count = participants.length
+        io.to(`session:${currentSession}`).emit('participants:list', participants)
         io.to(`session:${currentSession}`).emit('participants:count', count)
-      }
 
-      console.log('Client disconnected:', socket.id)
+        console.log(`Client disconnected: ${socket.id}. Remaining participants: ${count}`)
+      } else {
+        console.log('Client disconnected:', socket.id)
+      }
     })
   })
 }
