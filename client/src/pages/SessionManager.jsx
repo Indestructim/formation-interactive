@@ -33,17 +33,31 @@ export default function SessionManager() {
 
     setCreating(true)
     try {
-      const res = await fetch(`${API_URL}/api/sessions`, {
+      console.log('[SessionManager] Creating session, API_URL:', API_URL)
+      const url = `${API_URL}/api/sessions`
+      console.log('[SessionManager] Fetching:', url)
+
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newSessionName })
       })
+
+      console.log('[SessionManager] Response status:', res.status)
+
+      if (!res.ok) {
+        const errorText = await res.text()
+        throw new Error(`HTTP ${res.status}: ${errorText}`)
+      }
+
       const session = await res.json()
+      console.log('[SessionManager] Session created:', session)
       setSessions(prev => [session, ...prev])
       setShowCreateModal(false)
       setNewSessionName('')
     } catch (error) {
       console.error('Error creating session:', error)
+      alert(`Erreur lors de la création: ${error.message}`)
     } finally {
       setCreating(false)
     }

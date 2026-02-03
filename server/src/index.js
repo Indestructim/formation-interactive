@@ -12,20 +12,40 @@ const httpServer = createServer(app)
 
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : ['http://localhost:5173', 'http://127.0.0.1:5173']
 
+// Add Vercel preview URLs pattern
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true)
+
+    // Check exact match
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    // Allow any vercel.app subdomain for preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      console.log('[CORS] Allowing Vercel preview URL:', origin)
+      return callback(null, true)
+    }
+
+    console.log('[CORS] Blocked origin:', origin)
+    console.log('[CORS] Allowed origins:', allowedOrigins)
+    callback(new Error('Not allowed by CORS'))
+  },
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
+  credentials: true
+}
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST']
-  }
+  cors: corsOptions
 })
 
 // Middleware
-app.use(cors({
-  origin: allowedOrigins
-}))
+app.use(cors(corsOptions))
 app.use(express.json())
 
 // Make io available to routes
@@ -35,9 +55,14 @@ app.set('io', io)
 app.use('/api/sessions', sessionsRouter)
 app.use('/api/activities', activitiesRouter)
 
-// Health check
+// Health check with debug info
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' })
+  res.json({
+    status: 'ok',
+    allowedOrigins: allowedOrigins,
+    requestOrigin: req.headers.origin || 'no-origin',
+    timestamp: new Date().toISOString()
+  })
 })
 
 // Socket.io handlers

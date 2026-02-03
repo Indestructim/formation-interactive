@@ -23,9 +23,14 @@ router.get('/', (req, res) => {
 
 // Create a new session
 router.post('/', async (req, res) => {
+  console.log('[Sessions] POST / - Creating new session')
+  console.log('[Sessions] Request body:', req.body)
+  console.log('[Sessions] Origin:', req.headers.origin)
+
   const { name } = req.body
 
   if (!name?.trim()) {
+    console.log('[Sessions] Error: name is required')
     return res.status(400).json({ error: 'Session name is required' })
   }
 
