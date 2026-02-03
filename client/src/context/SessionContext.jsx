@@ -13,7 +13,7 @@ export function SessionProvider({ children }) {
   const [isPresenter, setIsPresenter] = useState(false)
 
   const createSession = useCallback(async (name) => {
-    const res = await fetch(`${API_URL}/api/sessions', {
+    const res = await fetch(`${API_URL}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name })
@@ -30,7 +30,7 @@ export function SessionProvider({ children }) {
   }, [socket])
 
   const joinSession = useCallback(async (code, nickname) => {
-    const res = await fetch(`/api/sessions/${code}/join`, {
+    const res = await fetch(`${API_URL}/api/sessions/${code}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nickname })

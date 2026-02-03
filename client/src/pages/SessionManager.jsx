@@ -17,7 +17,7 @@ export default function SessionManager() {
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/sessions')
+      const res = await fetch(`${API_URL}/api/sessions`)
       const data = await res.json()
       setSessions(data)
     } catch (error) {
@@ -33,7 +33,7 @@ export default function SessionManager() {
 
     setCreating(true)
     try {
-      const res = await fetch(`${API_URL}/api/sessions', {
+      const res = await fetch(`${API_URL}/api/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newSessionName })
@@ -53,7 +53,7 @@ export default function SessionManager() {
     if (!confirm('Supprimer cette session ?')) return
 
     try {
-      await fetch(`/api/sessions/${sessionCode}`, { method: 'DELETE' })
+      await fetch(`${API_URL}/api/sessions/${sessionCode}`, { method: 'DELETE' })
       setSessions(prev => prev.filter(s => s.code !== sessionCode))
     } catch (error) {
       console.error('Error deleting session:', error)
@@ -63,7 +63,7 @@ export default function SessionManager() {
   const handleToggleActive = async (session) => {
     try {
       const endpoint = session.is_active ? 'end' : 'reactivate'
-      await fetch(`/api/sessions/${session.code}/${endpoint}`, { method: 'POST' })
+      await fetch(`${API_URL}/api/sessions/${session.code}/${endpoint}`, { method: 'POST' })
       setSessions(prev => prev.map(s =>
         s.code === session.code ? { ...s, is_active: !s.is_active } : s
       ))
